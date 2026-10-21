@@ -1,0 +1,18 @@
+# =====================================================================
+# Grafana dashboard provisioning
+# Dashboards JSON nằm ở ./deployment/grafana/dashboards (mount read-only)
+# =====================================================================
+apiVersion: 1
+
+providers:
+  - name: appointment-dashboards
+    orgId: 1
+    folder: 'Appointment System'
+    folderUid: appointment
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

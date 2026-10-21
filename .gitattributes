@@ -1,0 +1,17 @@
+# Chuẩn hoá line ending: file text dùng LF để script chạy đúng trong container Linux
+* text=auto eol=lf
+
+# Script shell & cấu hình phải giữ LF (nếu CRLF, `/bin/sh` trong container sẽ lỗi)
+*.sh   text eol=lf
+*.conf text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+Dockerfile text eol=lf
+*.sql  text eol=lf
+
+# File nhị phân
+*.png  binary
+*.jpg  binary
+*.ico  binary
+*.woff binary
+*.woff2 binary

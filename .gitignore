@@ -1,0 +1,36 @@
+# =====================================================================
+# Đề 40 - Appointment System - Git ignore
+# =====================================================================
+
+# Bí mật: KHÔNG bao giờ commit .env (chỉ commit .env.example)
+.env
+.env.*
+!.env.example
+
+# Dependency & build artifacts
+node_modules/
+npm-debug.log*
+coverage/
+dist/
+build/
+
+# Log & dữ liệu sinh ra khi chạy
+*.log
+logs/
+data/
+
+# Chứng chỉ tự sinh (đã có volume nginx_certs)
+deployment/nginx/certs/
+*.pem
+*.key
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Docker override cá nhân
+docker-compose.override.yml

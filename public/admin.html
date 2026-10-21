@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Quản trị · Đặt lịch hẹn</title>
+    <link rel="stylesheet" href="/css/styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="inner">
+        <a class="brand" href="index.html"><span class="brand-mark">Đ</span> Đặt lịch hẹn</a>
+        <nav class="site-nav" aria-label="Điều hướng chính">
+          <a href="index.html">Đặt lịch</a>
+          <a href="admin.html" id="nav-admin" class="is-active" hidden>Quản trị</a>
+          <span class="nav-user" id="nav-user" hidden></span>
+          <a href="login.html" id="nav-login">Đăng nhập</a>
+          <a href="register.html" id="nav-register">Đăng ký</a>
+          <button type="button" id="nav-logout" hidden>Đăng xuất</button>
+        </nav>
+      </div>
+    </header>
+
+    <main class="page">
+      <div class="page-head">
+        <div>
+          <h1>Bảng điều khiển quản trị</h1>
+          <p class="muted">Theo dõi lịch hẹn, xác nhận yêu cầu mới và huỷ lịch khi cần thiết.</p>
+        </div>
+        <button class="btn btn-ghost" type="button" id="refresh-all">Làm mới dữ liệu</button>
+      </div>
+
+      <div class="alert alert-info" id="page-alert" hidden></div>
+
+      <section class="stats" aria-label="Số liệu tổng quan">
+        <div class="stat stat-accent-pending">
+          <div class="stat-label">Chờ xác nhận</div>
+          <div class="stat-value" id="stat-pending">—</div>
+        </div>
+        <div class="stat stat-accent-confirmed">
+          <div class="stat-label">Đã xác nhận</div>
+          <div class="stat-value" id="stat-confirmed">—</div>
+        </div>
+        <div class="stat stat-accent-completed">
+          <div class="stat-label">Hoàn thành</div>
+          <div class="stat-value" id="stat-completed">—</div>
+        </div>
+        <div class="stat stat-accent-cancelled">
+          <div class="stat-label">Đã huỷ</div>
+          <div class="stat-value" id="stat-cancelled">—</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Lịch hôm nay</div>
+          <div class="stat-value" id="stat-today">—</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Tổng lịch hẹn</div>
+          <div class="stat-value" id="stat-total">—</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Khách hàng</div>
+          <div class="stat-value" id="stat-customers">—</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Khung giờ trống</div>
+          <div class="stat-value" id="stat-slots">—</div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="list-title">
+        <div class="card-head">
+          <h2 id="list-title">Danh sách lịch hẹn</h2>
+          <span class="muted small" id="list-summary"></span>
+        </div>
+
+        <form class="filters" id="filter-form">
+          <div class="field">
+            <label for="filter-status">Trạng thái</label>
+            <select id="filter-status">
+              <option value="">Tất cả</option>
+              <option value="pending">Chờ xác nhận</option>
+              <option value="confirmed">Đã xác nhận</option>
+              <option value="completed">Hoàn thành</option>
+              <option value="cancelled">Đã huỷ</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="filter-date">Ngày</label>
+            <input type="date" id="filter-date" />
+          </div>
+          <div class="field">
+            <label for="filter-q">Tìm theo khách hàng</label>
+            <input type="search" id="filter-q" maxlength="100" placeholder="Email hoặc họ tên" />
+          </div>
+          <div class="btn-row">
+            <button class="btn" type="submit">Lọc</button>
+            <button class="btn btn-ghost" type="button" id="clear-filters">Xoá lọc</button>
+          </div>
+        </form>
+
+        <div id="appointments-list">
+          <div class="loading">Đang tải lịch hẹn…</div>
+        </div>
+
+        <div class="pagination">
+          <span id="page-info">—</span>
+          <div class="btn-row">
+            <button class="btn btn-ghost btn-sm" type="button" id="page-prev" disabled>← Trang trước</button>
+            <button class="btn btn-ghost btn-sm" type="button" id="page-next" disabled>Trang sau →</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      Đề 40 · Hệ thống đặt lịch hẹn · Khu vực quản trị
+    </footer>
+
+    <script src="/js/common.js"></script>
+    <script src="/js/admin.js"></script>
+  </body>
+</html>

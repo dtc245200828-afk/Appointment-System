@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Hệ thống đặt lịch hẹn trực tuyến - chọn dịch vụ và khung giờ còn trống." />
+    <title>Đặt lịch hẹn trực tuyến</title>
+    <link rel="stylesheet" href="/css/styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="inner">
+        <a class="brand" href="index.html"><span class="brand-mark">Đ</span> Đặt lịch hẹn</a>
+        <nav class="site-nav" aria-label="Điều hướng chính">
+          <a href="index.html" class="is-active">Đặt lịch</a>
+          <a href="admin.html" id="nav-admin" hidden>Quản trị</a>
+          <span class="nav-user" id="nav-user" hidden></span>
+          <a href="login.html" id="nav-login">Đăng nhập</a>
+          <a href="register.html" id="nav-register">Đăng ký</a>
+          <button type="button" id="nav-logout" hidden>Đăng xuất</button>
+        </nav>
+      </div>
+    </header>
+
+    <main class="page">
+      <div class="page-head">
+        <div>
+          <h1>Đặt lịch hẹn trực tuyến</h1>
+          <p class="muted">
+            Chọn dịch vụ, chọn khung giờ còn trống rồi gửi yêu cầu. Quản trị viên sẽ xác nhận lịch hẹn của bạn
+            trong thời gian sớm nhất.
+          </p>
+        </div>
+        <span class="badge badge-neutral" id="tz-badge">Múi giờ: Asia/Ho_Chi_Minh</span>
+      </div>
+
+      <div class="alert alert-info" id="page-alert" hidden></div>
+
+      <section class="card" aria-labelledby="step-1-title">
+        <div class="card-head">
+          <h2 id="step-1-title">1. Chọn dịch vụ</h2>
+          <button class="btn btn-ghost btn-sm" type="button" id="reload-services">Tải lại</button>
+        </div>
+        <div class="service-list" id="service-list">
+          <div class="loading">Đang tải danh sách dịch vụ…</div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="step-2-title">
+        <div class="card-head">
+          <h2 id="step-2-title">2. Chọn khung giờ</h2>
+          <div class="field field-inline">
+            <label for="slot-date">Ngày</label>
+            <input type="date" id="slot-date" />
+          </div>
+        </div>
+        <div id="slot-area">
+          <div class="empty">Vui lòng chọn một dịch vụ để xem khung giờ còn trống.</div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="step-3-title">
+        <div class="card-head">
+          <h2 id="step-3-title">3. Hoàn tất đặt lịch</h2>
+        </div>
+        <form id="booking-form" novalidate>
+          <div class="alert alert-info" id="selected-summary" hidden></div>
+          <div class="field">
+            <label for="booking-note">Ghi chú (không bắt buộc)</label>
+            <textarea
+              id="booking-note"
+              maxlength="500"
+              placeholder="Ví dụ: Tôi muốn được tư vấn thêm trước khi đến."
+            ></textarea>
+            <span class="hint">Tối đa 500 ký tự.</span>
+          </div>
+          <div class="btn-row">
+            <button class="btn" type="submit" id="booking-submit" disabled>Xác nhận đặt lịch</button>
+            <button class="btn btn-ghost" type="button" id="booking-reset" disabled>Chọn lại</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="card" aria-labelledby="my-appointments-title">
+        <div class="card-head">
+          <h2 id="my-appointments-title">Lịch hẹn của tôi</h2>
+          <button class="btn btn-ghost btn-sm" type="button" id="reload-mine">Làm mới</button>
+        </div>
+        <div id="my-appointments">
+          <div class="loading">Đang tải lịch hẹn…</div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      Đề 40 · Hệ thống đặt lịch hẹn · Node.js + PostgreSQL + Nginx
+    </footer>
+
+    <script src="/js/common.js"></script>
+    <script src="/js/app.js"></script>
+  </body>
+</html>

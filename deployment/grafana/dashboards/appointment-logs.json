@@ -1,0 +1,141 @@
+{
+  "uid": "appt-logs",
+  "title": "Appointment System - Logs (Loki)",
+  "description": "Log Nginx và ứng dụng Node.js được Promtail thu thập và đẩy về Loki.",
+  "tags": ["appointment", "logs", "loki"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "editable": true,
+  "time": { "from": "now-1h", "to": "now" },
+  "annotations": { "list": [] },
+  "templating": {
+    "list": [
+      {
+        "name": "search",
+        "label": "Từ khoá",
+        "type": "textbox",
+        "query": "",
+        "current": { "selected": false, "text": "", "value": "" },
+        "options": []
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Log/phút (Nginx access)",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 5, "w": 8, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 1, "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [
+        { "refId": "A", "expr": "sum(count_over_time({job=\"nginx\", log_type=\"access\"}[1m]))", "queryType": "instant" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Lỗi 5xx (30 phút)",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 5, "w": 8, "x": 8, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "fixed", "fixedColor": "red" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [
+        { "refId": "A", "expr": "sum(count_over_time({job=\"nginx\", log_type=\"access\"} | json | status >= 500 [30m]))", "queryType": "instant" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Cảnh báo/lỗi ứng dụng (30 phút)",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 5, "w": 8, "x": 16, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 10 }] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [
+        { "refId": "A", "expr": "sum(count_over_time({job=\"appointment-app\", level=~\"warn|error|fatal\"} [30m]))", "queryType": "instant" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Lưu lượng log theo job",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 5 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "decimals": 1, "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 30, "showPoints": "never", "stacking": { "mode": "normal", "group": "A" } } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "refId": "A", "expr": "sum by (service) (count_over_time({job=~\"nginx|appointment-app\"}[1m]))", "legendFormat": "{{service}}" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "logs",
+      "title": "Nginx access log (JSON)",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 12 },
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true, "dedupStrategy": "none" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{job=\"nginx\", log_type=\"access\"} |= \"$search\"",
+          "queryType": "range"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "logs",
+      "title": "Ứng dụng Node.js (pino JSON)",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 12 },
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true, "dedupStrategy": "none" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{job=\"appointment-app\"} |= \"$search\"",
+          "queryType": "range"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "logs",
+      "title": "Lỗi 5xx / log mức error",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 22 },
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true, "dedupStrategy": "none" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{job=\"nginx\", log_type=\"access\"} | json | status >= 500",
+          "queryType": "range"
+        },
+        {
+          "refId": "B",
+          "expr": "{job=\"appointment-app\"} | json | level =~ \"error|fatal\"",
+          "queryType": "range"
+        }
+      ]
+    }
+  ]
+}

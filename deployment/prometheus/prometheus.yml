@@ -1,0 +1,61 @@
+# =====================================================================
+# Prometheus configuration - Đề 40 Appointment System
+# Scrape: ứng dụng Node.js, cAdvisor, PostgreSQL Exporter, Nginx Exporter
+# =====================================================================
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: appointment-system
+
+rule_files:
+  - /etc/prometheus/alert-rules.yml
+
+scrape_configs:
+  # Prometheus tự giám sát
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: prometheus
+
+  # Web App: prom-client expose /metrics (HTTP, latency, CPU, RAM, DB pool)
+  - job_name: appointment-web
+    metrics_path: /metrics
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['app:3000']
+        labels:
+          service: appointment-web
+
+  # Container metrics (CPU/RAM/trạng thái của từng container)
+  - job_name: cadvisor
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['cadvisor:8080']
+        labels:
+          service: cadvisor
+
+  # PostgreSQL metrics qua postgres_exporter (role exporter_user, pg_monitor)
+  - job_name: postgres
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+        labels:
+          service: postgres
+
+  # Nginx metrics qua nginx-prometheus-exporter (stub_status)
+  - job_name: nginx
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['nginx-exporter:9113']
+        labels:
+          service: nginx
+
+  # Loki self-metrics
+  - job_name: loki
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['loki:3100']
+        labels:
+          service: loki

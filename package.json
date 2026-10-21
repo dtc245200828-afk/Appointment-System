@@ -1,0 +1,31 @@
+{
+  "name": "appointment-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "De 40 - He thong dat lich hen truc tuyen (Appointment System): Node.js + Express + PostgreSQL + Docker + Nginx + Prometheus/Grafana + Loki/Promtail",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test tests/unit/*.test.js",
+    "test:integration": "node --test tests/integration/*.test.js",
+    "test:all": "node --test tests/unit tests/integration",
+    "secrets": "node scripts/generate-secrets.js"
+  },
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.1",
+    "pino": "^9.5.0",
+    "pino-http": "^10.3.0",
+    "prom-client": "^15.1.3"
+  }
+}

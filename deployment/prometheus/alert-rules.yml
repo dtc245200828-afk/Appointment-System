@@ -1,0 +1,68 @@
+# =====================================================================
+# Alert rules (hiển thị tại http://localhost:9090/alerts)
+# Không cấu hình Alertmanager để giữ hệ thống gọn trong phạm vi đồ án.
+# =====================================================================
+groups:
+  - name: appointment-availability
+    interval: 30s
+    rules:
+      - alert: AppointmentAppDown
+        expr: up{job="appointment-web"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Web app không phản hồi /metrics"
+          description: "Prometheus không scrape được {{ $labels.instance }} trong hơn 1 phút."
+
+      - alert: AppointmentDatabaseDown
+        expr: pg_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL không truy cập được"
+          description: "postgres_exporter không kết nối được database."
+
+      - alert: NginxDown
+        expr: nginx_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Nginx không phản hồi stub_status"
+
+  - name: appointment-performance
+    interval: 30s
+    rules:
+      - alert: HighHttpErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+            /
+          sum(rate(http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tỷ lệ lỗi 5xx trên 5% trong 5 phút"
+          description: "Tỷ lệ lỗi hiện tại: {{ $value | humanizePercentage }}."
+
+      - alert: HighRequestLatencyP95
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_request_duration_seconds_bucket[5m]))
+          ) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P95 latency vượt 1 giây"
+          description: "P95 hiện tại: {{ $value | humanizeDuration }}."
+
+      - alert: TooManyActiveAppointments
+        expr: appointments_active > 50
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "Số lịch hẹn đang hoạt động khá cao ({{ $value }})"

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Đăng ký · Đặt lịch hẹn</title>
+    <link rel="stylesheet" href="/css/styles.css" />
+  </head>
+  <body class="auth-wrap">
+    <main class="auth-card">
+      <a class="brand" href="index.html"><span class="brand-mark">Đ</span> Đặt lịch hẹn</a>
+      <h1>Tạo tài khoản</h1>
+      <p class="muted small">Đăng ký miễn phí để đặt lịch hẹn trực tuyến.</p>
+
+      <div class="alert alert-error" id="form-alert" hidden></div>
+
+      <form id="register-form" novalidate>
+        <div class="field">
+          <label for="fullName">Họ và tên</label>
+          <input
+            type="text"
+            id="fullName"
+            name="fullName"
+            autocomplete="name"
+            required
+            minlength="2"
+            maxlength="120"
+            placeholder="Nguyễn Văn A"
+          />
+        </div>
+        <div class="field">
+          <label for="email">Email</label>
+          <input
+            type="email"
+            id="email"
+            name="email"
+            autocomplete="email"
+            required
+            maxlength="180"
+            placeholder="ban@example.com"
+          />
+        </div>
+        <div class="field">
+          <label for="phone">Số điện thoại (không bắt buộc)</label>
+          <input
+            type="text"
+            id="phone"
+            name="phone"
+            autocomplete="tel"
+            maxlength="20"
+            placeholder="0901234567"
+          />
+        </div>
+        <div class="field">
+          <label for="password">Mật khẩu</label>
+          <input
+            type="password"
+            id="password"
+            name="password"
+            autocomplete="new-password"
+            required
+            minlength="8"
+            maxlength="72"
+            placeholder="••••••••"
+          />
+          <span class="hint">8-72 ký tự, gồm chữ thường, chữ hoa và chữ số.</span>
+        </div>
+        <div class="field">
+          <label for="passwordConfirm">Nhập lại mật khẩu</label>
+          <input
+            type="password"
+            id="passwordConfirm"
+            name="passwordConfirm"
+            autocomplete="new-password"
+            required
+            minlength="8"
+            maxlength="72"
+            placeholder="••••••••"
+          />
+        </div>
+        <button class="btn btn-block" type="submit" id="register-submit">Đăng ký</button>
+      </form>
+
+      <p class="auth-foot">
+        Đã có tài khoản? <a href="login.html">Đăng nhập</a><br />
+        <a href="index.html">← Về trang đặt lịch</a>
+      </p>
+    </main>
+
+    <script src="/js/common.js"></script>
+    <script src="/js/register.js"></script>
+  </body>
+</html>

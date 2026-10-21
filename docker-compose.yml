@@ -1,0 +1,367 @@
+# =====================================================================
+# Đề 40 - Appointment System
+# Docker Compose: Web App, PostgreSQL, pgAdmin, Nginx, Prometheus, Grafana,
+#                 Loki, Promtail và các exporter (cAdvisor, postgres, nginx)
+#
+# Nguyên tắc:
+#  - Chỉ publish cổng thực sự cần: 80/443 (Nginx), các UI quản trị bind 127.0.0.1.
+#  - 3 network tách biệt: frontend (nginx<->app), backend (app<->db), monitoring.
+#  - Mọi secret lấy từ file .env (không commit lên Git).
+# =====================================================================
+name: appointment-system
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-hardened: &hardened
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+services:
+  # -------------------------------------------------------------------
+  # PostgreSQL - chỉ nằm trong network backend (internal, không có egress)
+  # -------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: appointment-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-appointment}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required - copy .env.example to .env}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?APP_DB_PASSWORD is required}
+      EXPORTER_DB_PASSWORD: ${EXPORTER_DB_PASSWORD:?EXPORTER_DB_PASSWORD is required}
+      PGDATA: /var/lib/postgresql/data/pgdata
+      TZ: ${APP_TIMEZONE:-Asia/Ho_Chi_Minh}
+      POSTGRES_INITDB_ARGS: "--data-checksums --auth-host=scram-sha-256"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    shm_size: 128mb
+    logging: *default-logging
+
+  # -------------------------------------------------------------------
+  # Node.js / Express API + website tĩnh
+  # -------------------------------------------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: appointment-system-app:latest
+    container_name: appointment-app
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_URL: postgresql://app_user:${APP_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-appointment}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
+      BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-12}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_DIR: /app/logs
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Ho_Chi_Minh}
+      TRUST_PROXY: "1"
+      MAX_ACTIVE_APPOINTMENTS_PER_USER: ${MAX_ACTIVE_APPOINTMENTS_PER_USER:-5}
+    volumes:
+      - app_logs:/app/logs
+    networks:
+      - frontend
+      - backend
+      - monitoring
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # -------------------------------------------------------------------
+  # Nginx reverse proxy (non-root, 80->8080, 443->8443)
+  # -------------------------------------------------------------------
+  nginx:
+    build:
+      context: ./deployment
+      dockerfile: nginx/Dockerfile
+    image: appointment-system-nginx:latest
+    container_name: appointment-nginx
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:8080"
+      - "${HTTPS_PORT:-443}:8443"
+    environment:
+      NGINX_SERVER_NAME: ${NGINX_SERVER_NAME:-localhost}
+    volumes:
+      - nginx_logs:/var/log/nginx
+      - nginx_certs:/etc/nginx/certs
+    networks:
+      - frontend
+      - monitoring
+    depends_on:
+      app:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    logging: *default-logging
+
+  # -------------------------------------------------------------------
+  # pgAdmin - bind 127.0.0.1, chỉ vào network backend
+  # -------------------------------------------------------------------
+  pgadmin:
+    image: dpage/pgadmin4:8.14
+    container_name: appointment-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@appointment.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?PGADMIN_DEFAULT_PASSWORD is required}
+      PGADMIN_LISTEN_PORT: "80"
+      PGADMIN_CONFIG_UPDATE_CHECK: "False"
+      PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION: "True"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    ports:
+      - "127.0.0.1:${PGADMIN_PORT:-5050}:80"
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *default-logging
+
+  # -------------------------------------------------------------------
+  # Prometheus
+  # -------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: appointment-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+    volumes:
+      - ./deployment/prometheus:/etc/prometheus:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    networks:
+      - monitoring
+    <<: *hardened
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:9090/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging: *default-logging
+
+  # -------------------------------------------------------------------
+  # cAdvisor - metrics container (CPU/RAM/trạng thái)
+  # Lưu ý: cần privileged + mount /sys, /var/lib/docker để đọc số liệu
+  # container. Đây là ngoại lệ có kiểm soát, chỉ chạy trong network
+  # monitoring và KHÔNG publish port ra ngoài.
+  # -------------------------------------------------------------------
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: appointment-cadvisor
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - monitoring
+    logging: *default-logging
+
+  # -------------------------------------------------------------------
+  # postgres_exporter - chỉ dùng role exporter_user (pg_monitor)
+  # -------------------------------------------------------------------
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.16.0
+    container_name: appointment-postgres-exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_URI: "postgres:5432/${POSTGRES_DB:-appointment}?sslmode=disable"
+      DATA_SOURCE_USER: exporter_user
+      DATA_SOURCE_PASS: ${EXPORTER_DB_PASSWORD:?EXPORTER_DB_PASSWORD is required}
+      PG_EXPORTER_AUTO_DISCOVER_DATABASES: "false"
+      PG_EXPORTER_DISABLE_DEFAULT_METRICS: "false"
+      PG_EXPORTER_DISABLE_SETTINGS_METRICS: "false"
+    networks:
+      - backend
+      - monitoring
+    depends_on:
+      postgres:
+        condition: service_healthy
+    <<: *hardened
+    logging: *default-logging
+
+  # -------------------------------------------------------------------
+  # nginx-prometheus-exporter - đọc /nginx_status qua network monitoring
+  # -------------------------------------------------------------------
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:1.4.0
+    container_name: appointment-nginx-exporter
+    restart: unless-stopped
+    command:
+      - --nginx.scrape-uri=http://nginx:8080/nginx_status
+    networks:
+      - monitoring
+    depends_on:
+      nginx:
+        condition: service_healthy
+    <<: *hardened
+    logging: *default-logging
+
+  # -------------------------------------------------------------------
+  # Loki - lưu trữ log (single binary, filesystem storage)
+  # -------------------------------------------------------------------
+  loki:
+    image: grafana/loki:3.2.1
+    container_name: appointment-loki
+    restart: unless-stopped
+    user: "10001:10001"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./deployment/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    networks:
+      - monitoring
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3100/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    logging: *default-logging
+
+  # -------------------------------------------------------------------
+  # Promtail - gửi log Nginx + Node.js tới Loki
+  # -------------------------------------------------------------------
+  promtail:
+    image: grafana/promtail:3.2.1
+    container_name: appointment-promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./deployment/promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - nginx_logs:/var/log/nginx:ro
+      - app_logs:/var/log/app:ro
+      - promtail_positions:/tmp/positions
+    networks:
+      - monitoring
+    depends_on:
+      loki:
+        condition: service_healthy
+    logging: *default-logging
+
+  # -------------------------------------------------------------------
+  # Grafana - datasource + dashboard được provision tự động
+  # -------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: appointment-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3001}
+      GF_SERVER_SERVE_FROM_SUB_PATH: "false"
+      GF_LOG_MODE: console
+      GF_LOG_LEVEL: info
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deployment/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deployment/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
+    networks:
+      - monitoring
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    <<: *hardened
+    logging: *default-logging
+
+# =====================================================================
+# Volumes
+# =====================================================================
+volumes:
+  postgres_data:
+  pgadmin_data:
+  prometheus_data:
+  grafana_data:
+  loki_data:
+  nginx_logs:
+  app_logs:
+  nginx_certs:
+  promtail_positions:
+
+# =====================================================================
+# Networks - tách biệt theo chức năng
+# =====================================================================
+networks:
+  # Nginx <-> App (không có kết nối trực tiếp tới database)
+  frontend:
+    name: appointment_frontend
+  # App <-> PostgreSQL (internal: không có egress ra Internet)
+  backend:
+    name: appointment_backend
+    internal: true
+  # Prometheus/Grafana/Loki/Exporter <-> App/Nginx
+  monitoring:
+    name: appointment_monitoring
