@@ -10,12 +10,17 @@
  * Biến môi trường:
  *   BASE_URL  - mặc định https://localhost (đi qua Nginx, TLS self-signed)
  *   ALLOW_INSECURE_TLS - đặt "false" nếu dùng chứng chỉ thật và muốn kiểm tra TLS
+ *   ADMIN_EMAIL / ADMIN_PASSWORD - tài khoản admin để test luồng xác nhận lịch hẹn
+ *                                  (mặc định trùng db/init/03_seed.sql)
  *
  * Chứng chỉ của Nginx là self-signed nên mặc định test tắt kiểm tra chuỗi
  * chứng chỉ (chỉ trong tiến trình test, không ảnh hưởng ứng dụng).
  *
  * Nếu máy chủ chưa sẵn sàng, các test sẽ được SKIP thay vì báo lỗi,
  * để `npm run test:all` vẫn dùng được trong môi trường không có Docker.
+ * Lưu ý: /api/auth/ giới hạn 20 request/15 phút/IP (bộ đếm in-memory). Nếu chạy
+ * test nhiều lần liên tiếp trong 15 phút, khởi động lại app để reset bộ đếm:
+ *   docker compose restart app
  * Lưu ý: test tạo tài khoản/dữ liệu thật trong DB dev, nên chỉ chạy trên môi
  * trường demo hoặc database dùng để kiểm thử.
  */
@@ -26,6 +31,9 @@ const { before } = require('node:test');
 
 const BASE_URL = (process.env.BASE_URL || 'https://localhost').replace(/\/+$/, '');
 const TIMEOUT_MS = 10_000;
+// Tài khoản admin seed sẵn trong db/init/03_seed.sql (chỉ dùng cho môi trường demo).
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@appointment.local';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Admin@12345';
 
 // fetch của Node (undici) đọc biến này khi thiết lập TLS handshake.
 if (BASE_URL.startsWith('https://') && process.env.ALLOW_INSECURE_TLS !== 'false') {
@@ -36,7 +44,19 @@ if (BASE_URL.startsWith('https://') && process.env.ALLOW_INSECURE_TLS !== 'false
 let serverUp = false;
 let skipReason = 'Máy chủ chưa sẵn sàng.';
 
+// Nginx giới hạn 5 request/giây/IP (burst 5) cho /api/auth/ và /api/ nên test
+// giãn nhịp ~4 request/giây để không tự kích hoạt rate limit.
+const MIN_REQUEST_INTERVAL_MS = 260;
+let lastRequestAt = 0;
+
+async function throttle() {
+  const waitMs = lastRequestAt + MIN_REQUEST_INTERVAL_MS - Date.now();
+  if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+  lastRequestAt = Date.now();
+}
+
 async function request(path, options) {
+  await throttle();
   const opts = options || {};
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -305,6 +325,103 @@ test('GET /api/admin/stats: khách hàng thường bị chặn 403', async (t) =
 
   const anonymous = await request('/api/admin/stats');
   assert.equal(anonymous.status, 401);
+});
+
+test('GET /api/slots?days=14: trả về khung giờ còn trống kèm thông tin dịch vụ', async (t) => {
+  if (!serverUp) return t.skip(skipReason);
+
+  const response = await request('/api/slots?days=14');
+  assert.equal(response.status, 200, response.text);
+  assert.ok(Array.isArray(response.json.slots));
+  assert.ok(response.json.slots.length > 0, 'cần khung giờ trống từ seed data');
+
+  const slot = response.json.slots[0];
+  ['id', 'service_id', 'service_name', 'start_time', 'end_time', 'slot_date', 'start_local'].forEach(
+    (field) => {
+      assert.ok(Object.prototype.hasOwnProperty.call(slot, field), `thiếu trường ${field}`);
+    }
+  );
+  assert.equal(slot.status, 'available');
+  assert.equal(typeof response.json.timezone, 'string');
+});
+
+test('Luồng quản trị: admin xác nhận lịch hẹn của khách hàng', async (t) => {
+  if (!serverUp) return t.skip(skipReason);
+
+  // (1) Đăng nhập admin (seed data)
+  const adminLogin = await request('/api/auth/login', {
+    method: 'POST',
+    body: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
+  });
+  assert.equal(adminLogin.status, 200, `không đăng nhập được admin: ${adminLogin.text}`);
+  assert.equal(adminLogin.json.user.role, 'admin');
+  const adminToken = adminLogin.json.token;
+
+  // (2) Khách đăng ký và đặt một lịch hẹn mới (trạng thái pending)
+  const registered = await request('/api/auth/register', {
+    method: 'POST',
+    body: {
+      fullName: 'Khách Chờ Xác Nhận',
+      email: uniqueEmail('e2e.confirm'),
+      password: 'MatKhau123',
+      phone: '0901234567',
+    },
+  });
+  assert.equal(registered.status, 201, registered.text);
+  const customerToken = registered.json.token;
+
+  const slotsResponse = await request('/api/slots?days=14');
+  assert.equal(slotsResponse.status, 200);
+  const slot = (slotsResponse.json.slots || [])[0];
+  if (!slot) {
+    t.diagnostic('Không còn khung giờ trống trong 14 ngày tới, bỏ qua phần xác nhận.');
+    return;
+  }
+
+  const created = await request('/api/appointments', {
+    method: 'POST',
+    token: customerToken,
+    body: { slotId: slot.id, note: 'Chờ admin xác nhận (integration test)' },
+  });
+  assert.equal(created.status, 201, created.text);
+  const appointmentId = created.json.appointment.id;
+  assert.equal(created.json.appointment.status, 'pending');
+
+  // (3) Admin thấy lịch hẹn trong danh sách đang chờ
+  const pendingList = await request('/api/admin/appointments?status=pending&limit=100', {
+    token: adminToken,
+  });
+  assert.equal(pendingList.status, 200, pendingList.text);
+  assert.ok(Array.isArray(pendingList.json.appointments));
+  assert.ok(
+    pendingList.json.appointments.some((item) => item.id === appointmentId),
+    'lịch hẹn mới phải xuất hiện trong danh sách chờ xác nhận'
+  );
+
+  // (4) Xác nhận lịch hẹn
+  const confirmed = await request(`/api/admin/appointments/${appointmentId}/confirm`, {
+    method: 'PATCH',
+    token: adminToken,
+  });
+  assert.equal(confirmed.status, 200, confirmed.text);
+  assert.equal(confirmed.json.alreadyConfirmed, false);
+  assert.equal(confirmed.json.appointment.status, 'confirmed');
+  assert.ok(confirmed.json.appointment.confirmedAt);
+
+  // (5) Gọi lại lần hai là idempotent
+  const again = await request(`/api/admin/appointments/${appointmentId}/confirm`, {
+    method: 'PATCH',
+    token: adminToken,
+  });
+  assert.equal(again.status, 200, again.text);
+  assert.equal(again.json.alreadyConfirmed, true);
+
+  // (6) Khách hàng thấy trạng thái mới trong "lịch của tôi"
+  const mine = await request('/api/appointments/me', { token: customerToken });
+  assert.equal(mine.status, 200);
+  const found = (mine.json.appointments || []).find((item) => item.id === appointmentId);
+  assert.ok(found, 'khách phải thấy lịch hẹn của mình');
+  assert.equal(found.status, 'confirmed');
 });
 
 test('GET /api/khong-ton-tai: trả về 404 JSON có mã lỗi', async (t) => {

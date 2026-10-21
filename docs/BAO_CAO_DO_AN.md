@@ -575,7 +575,7 @@ Image runtime không chứa compiler → giảm kích thước và bề mặt t�
 
 | Service | Image | Vai trò | Cổng publish |
 |---|---|---|---|
-| `postgres` | `postgres:16-alpine` | CSDL, init bằng `db/init/*.sql` | `127.0.0.1:5432` |
+| `postgres` | `postgres:16-alpine` | CSDL, init bằng `db/init/*.sql` | không (network `backend` internal) |
 | `app` | build từ `Dockerfile` | API + phục vụ tệp tĩnh | không |
 | `nginx` | build từ `nginx:1.27-alpine`, chạy user `nginx` | TLS, rate limit, reverse proxy | `80:8080`, `443:8443` |
 | `pgadmin` | `dpage/pgadmin4:8.14` | Quản trị CSDL (tuỳ chọn) | `127.0.0.1:5050` |
@@ -590,6 +590,14 @@ Image runtime không chứa compiler → giảm kích thước và bề mặt t�
 Tất cả service đều có `restart: unless-stopped` và logging `json-file` giới hạn `max-size=10m`, `max-file=3`
 để log Docker không làm đầy đĩa. Thứ tự khởi động: `postgres` healthy → `app` healthy → `nginx` healthy;
 `postgres-exporter`/`pgadmin` chờ PostgreSQL; `promtail` chờ Loki ready; Grafana chờ Prometheus và Loki.
+
+Hai điều chỉnh đã được kiểm chứng trên Docker Desktop:
+
+- pgAdmin 8.x dùng `email_validator` nên **từ chối domain `.local`**; compose đặt
+  `PGADMIN_CONFIG_ALLOW_SPECIAL_EMAIL_DOMAINS: '["local"]'` để chấp nhận `admin@appointment.local`.
+- Docker **không forward port** của container chỉ nằm trên network `internal`, nên `pgadmin` được gắn
+  thêm network `monitoring` (priority 100) để publish `127.0.0.1:5050`, đồng thời vẫn giữ `backend`
+  để truy cập PostgreSQL. Vì vậy PostgreSQL không publish cổng nào ra host.
 
 ### 7.3. Volume và network
 
@@ -617,7 +625,7 @@ Tất cả service đều có `restart: unless-stopped` và logging `json-file` 
 | HTTPS | `http2 on`, TLS 1.2/1.3, cipher ECDHE hiện đại, session cache 10m, tắt session tickets |
 | Rate limit | `limit_req_zone ... rate=5r/s`, `/api/auth/` burst 5, `/api/` burst 10, tĩnh burst 30; `limit_conn` 30 |
 | Header | HSTS (1 ngày — phù hợp self-signed), CSP chặt, `X-Frame-Options: DENY`, `nosniff`, Referrer-Policy, Permissions-Policy, COOP |
-| Proxy | `proxy_http_version 1.1`, keepalive 32, timeout 5s/60s, `proxy_hide_header X-Powered-By`, giữ `X-Request-Id` |
+| Proxy | `proxy_http_version 1.1`, keepalive 32, timeout 5s/60s, `proxy_hide_header` cho `X-Powered-By` và các security header của app (Nginx là lớp edge duy nhất đặt header), giữ `X-Request-Id` |
 | Log | `log_format json_combined` gồm `time`, `remote_addr`, `method`, `uri`, `status`, `request_time`, `request_id` |
 | Bảo vệ | Chặn path bắt đầu bằng dấu chấm (`/.git`, `/.env`), `/metrics` trả 404, `/nginx_status` chỉ IP nội bộ |
 | Lỗi | `error_page 502 503 504 /50x.html` trả trang 503 tiếng Việt thay vì trang mặc định của Nginx |
@@ -894,10 +902,10 @@ Kết quả chạy thực tế:
 ℹ fail 0
 ℹ cancelled 0
 ℹ skipped 0
-ℹ duration_ms 178.5686
+ℹ duration_ms 165.4839
 ```
 
-### 10.3. Integration test (8 test)
+### 10.3. Integration test (10 test)
 
 | Test | Kỳ vọng |
 |---|---|
@@ -908,60 +916,70 @@ Kết quả chạy thực tế:
 | Đặt trùng khung giờ | Request thứ hai nhận 409 `SLOT_UNAVAILABLE` |
 | Thiếu `slotId` | 400 `VALIDATION_ERROR` kèm `details` |
 | Khách gọi `/api/admin/stats` | 403 `FORBIDDEN` |
+| `GET /api/slots?days=14` | 200, mảng `slots` còn trống kèm `service_name`/`start_local` |
+| Luồng quản trị: admin xác nhận lịch hẹn | 200, `status = "confirmed"`, gọi lại `alreadyConfirmed = true` |
 | `GET /api/khong-ton-tai` | 404 JSON có `code` |
 
 Cơ chế an toàn: trước khi chạy, test gọi `/api/health`; nếu không kết nối được thì `t.skip()` **toàn bộ**
-test với lý do "Hãy chạy: docker compose up -d", nên không tạo báo cáo thất bại giả khi thiếu môi trường.
+10 test với lý do "Hãy chạy: docker compose up -d", nên không tạo báo cáo thất bại giả khi thiếu môi trường.
 Biến `BASE_URL` cho phép trỏ tới môi trường khác; mặc định `https://localhost` và bỏ kiểm tra chứng chỉ
-self-signed trừ khi đặt `ALLOW_INSECURE_TLS=false`.
+self-signed trừ khi đặt `ALLOW_INSECURE_TLS=false`. Bộ test giãn nhịp tối thiểu 260 ms/request (~4 r/s)
+để không tự kích hoạt rate limit 5 r/s của Nginx; tài khoản admin lấy từ `ADMIN_EMAIL`/`ADMIN_PASSWORD`
+(mặc định trùng seed data).
 
-Kết quả trong môi trường hiện tại (Docker Desktop không khả dụng):
+Kết quả chạy thực tế trên stack Docker (qua HTTPS → Nginx → app → PostgreSQL):
 
 ```
-ℹ tests 8
-ℹ pass 0
+ℹ tests 10
+ℹ suites 0
+ℹ pass 10
 ℹ fail 0
-ℹ skipped 8
+ℹ cancelled 0
+ℹ skipped 0
+ℹ duration_ms 9595.9519
 ```
 
-Đây là hành vi được thiết kế, không phải lỗi test. Khi stack chạy, kỳ vọng `pass 8 / fail 0`.
+Không có test nào bị skip: toàn bộ 10 test đều thực sự gọi API và kiểm tra dữ liệu trả về.
 
 ### 10.4. Kiểm tra cấu hình và tĩnh
 
 | Kiểm tra | Kết quả |
 |---|---|
 | `docker compose config -q` | exit 0 (cú pháp và biến bắt buộc hợp lệ) |
+| `docker compose ps -a` | 11/11 container `Up`; app/nginx/postgres/prometheus/grafana/loki/cadvisor `healthy` |
+| `docker compose exec nginx nginx -t` | `syntax is ok` + `test is successful` |
 | `node --check src/*.js src/routes/*.js` | không lỗi cú pháp |
 | Cân bằng ngoặc `deployment/nginx.conf` | độ sâu 0, không âm tại dòng nào |
-| JSON dashboard Grafana (4 file) | parse thành công, đủ `title`/`panels` |
+| JSON dashboard Grafana (4 file) | parse thành công, đủ `title`/`panels`; 4 dashboard đã provision |
 | `promtail-config.yml` | YAML hợp lệ; level Nginx đã ánh xạ về tập Loki chấp nhận |
+| Prometheus `/api/v1/rules` | 2 nhóm, 6 rule, `health = ok` |
 
 ### 10.5. Kịch bản kiểm thử thủ công
 
-Các bước dưới đây được thực hiện theo [`DEMO_CHECKLIST.md`](DEMO_CHECKLIST.md) và ghi lại kết quả thực tế
-khi stack chạy:
+Các bước dưới đây thực hiện theo [`DEMO_CHECKLIST.md`](DEMO_CHECKLIST.md); cột "Kết quả đã chạy" ghi
+nhận những gì đã kiểm chứng thực tế trên stack Docker trong phiên này:
 
-| Kịch bản | Kỳ vọng |
-|---|---|
-| Đăng ký → đăng nhập → đặt lịch → huỷ lịch | Trạng thái lần lượt `pending` → `cancelled`, khung giờ trở lại danh sách trống |
-| Hai phiên đặt cùng khung giờ | Phiên sau nhận 409, thông báo tiếng Việt, không treo dữ liệu |
-| Khách mở `/admin.html` | UI chuyển hướng; gọi API admin trả 403 |
-| Admin xác nhận lịch | `confirmed`, `confirmedAt` có giá trị, thống kê tăng |
-| Header bảo mật | HSTS, CSP, X-Frame-Options, nosniff hiện diện trên HTTPS |
-| `/metrics` từ Internet | 404 (chỉ Prometheus trong network monitoring scrape được) |
-| Prometheus/Grafana/Loki | 6 target `UP`, 4 dashboard có dữ liệu, log Nginx + app xuất hiện trong Loki |
+| Kịch bản | Kỳ vọng | Kết quả đã chạy |
+|---|---|---|
+| Đăng ký → đăng nhập → đặt lịch → huỷ lịch | `pending` → `cancelled`, khung giờ trở lại danh sách trống | Đạt (integration test) |
+| Hai phiên đặt cùng khung giờ | Phiên sau nhận 409, không treo dữ liệu | Đạt — `SLOT_UNAVAILABLE` |
+| Khách mở `/admin.html` | UI chuyển hướng; API admin trả 403 | API đạt 403; UI cần xác nhận lại khi bấm tay |
+| Admin xác nhận lịch | `confirmed`, `confirmedAt` có giá trị, thống kê tăng | Đạt (integration test, `appointments_confirmed_total = 1`) |
+| Header bảo mật | HSTS, CSP, X-Frame-Options, nosniff trên HTTPS | Đạt — một bộ header duy nhất từ Nginx |
+| `/metrics` và `/.env` từ Internet | 404 | Đạt (404/404) |
+| Prometheus/Grafana/Loki | 6 target `UP`, 4 dashboard có dữ liệu, log 2 nguồn trong Loki | Đạt — 6/6 `UP`, 4 dashboard, 163 dòng log app + 147 dòng Nginx trong 1 giờ |
+| pgAdmin | Mở được UI ở `127.0.0.1:5050`, kết nối được `postgres:5432` | Đạt (HTTP 200, TCP OK) |
 
-### 10.6. Hạn chế của lần kiểm thử gần nhất
+### 10.6. Ghi chú khi chạy lại kiểm thử
 
-Máy demo hiện tại trả `HTTP 500` cho mọi lệnh gọi Docker API, nên không thể build lại image và chạy
-11 container trong phiên này. Vì vậy:
-
-- Unit test và kiểm tra cấu hình vẫn chạy đầy đủ (kết quả ở trên).
-- Integration test tự skip thay vì fail — đúng thiết kế.
-- Các bước cần xác nhận lại khi Docker hoạt động: `docker compose up -d --build`, 6 target `UP`,
-  4 dashboard có dữ liệu, log Loki xuất hiện, header HTTPS, user non-root trong container.
-
-Quy trình xác nhận lại được ghi trong [`DEMO_CHECKLIST.md`](DEMO_CHECKLIST.md).
+- Nginx giới hạn 5 request/giây/IP nên bộ integration test giãn nhịp 260 ms/request. Bộ đếm `/api/auth/`
+  (20 request/15 phút/IP, lưu trong bộ nhớ tiến trình) có thể trả 429 nếu chạy nhiều lần trong 15 phút —
+  `docker compose restart app` để reset.
+- Integration test tạo tài khoản/lịch hẹn thật trong DB dev (kể cả một lịch `confirmed` để kiểm tra luồng
+  admin). Muốn DB sạch: `docker compose down -v` rồi up lại — thao tác này **xoá toàn bộ volume**.
+- Volume PostgreSQL/Grafana/Prometheus/Loki giữ nguyên qua các lần `docker compose up -d --build`:
+  dữ liệu 5 dịch vụ/390 khung giờ còn nguyên sau khi recreate container; user và lịch hẹn tăng thêm theo
+  mỗi lần chạy integration test (hiện 19 user/10 lịch hẹn).
 
 ## 11. Đánh giá, hạn chế, hướng phát triển
 
@@ -973,12 +991,12 @@ Quy trình xác nhận lại được ghi trong [`DEMO_CHECKLIST.md`](DEMO_CHECK
 | Giao diện khách hàng và quản trị | Đạt | 4 trang HTML + JS/CSS, CSP-safe, tiếng Việt |
 | Chống đặt trùng khung giờ | Đạt | 3 lớp bảo vệ (app lock, partial unique index, trigger) |
 | Phân quyền user/admin | Đạt | JWT + `requireAdmin` kiểm tra DB, integration test 403 |
-| Docker hóa toàn hệ thống | Đạt (cấu hình) | 11 service, 3 network, 9 volume, healthcheck, multi-stage |
-| Nginx reverse proxy + HTTPS | Đạt (cấu hình) | TLS tự sinh, HTTP→HTTPS, gzip, rate limit, security headers |
-| Giám sát Prometheus/Grafana | Đạt (cấu hình) | 6 job, 6 alert, 4 dashboard, datasource provision |
-| Log tập trung Loki/Promtail | Đạt (cấu hình) | 3 pipeline, label hoá, ánh xạ level, truy vấn mẫu |
+| Docker hóa toàn hệ thống | Đạt (đã chạy thực tế) | 11 container `Up`, 3 network, 9 volume, healthcheck, multi-stage |
+| Nginx reverse proxy + HTTPS | Đạt (đã chạy thực tế) | TLS tự sinh, HTTP→301, gzip, rate limit, security headers (một bộ duy nhất) |
+| Giám sát Prometheus/Grafana | Đạt (đã chạy thực tế) | 6/6 target `UP`, 6 alert rule `ok`, 4 dashboard có dữ liệu |
+| Log tập trung Loki/Promtail | Đạt (đã chạy thực tế) | 3 pipeline, log app + Nginx + error log xuất hiện trong Loki |
 | Bảo mật nhiều lớp | Đạt | bcrypt, rate limit 2 lớp, DB least privilege, container hardening |
-| Kiểm thử tự động | Đạt | 21 unit pass, 8 integration tự skip khi thiếu môi trường |
+| Kiểm thử tự động | Đạt | 21 unit pass, 10 integration pass (0 skip) qua HTTPS |
 | Tài liệu | Đạt | README, SECURITY, DEMO_CHECKLIST, LOGQL_QUERIES, báo cáo |
 
 Điểm mạnh nổi bật:
@@ -1002,8 +1020,8 @@ Quy trình xác nhận lại được ghi trong [`DEMO_CHECKLIST.md`](DEMO_CHECK
 | Rate limit chia theo IP cho auth | Người dùng sau NAT dùng chung hạn mức đăng nhập | Rate limit đặt lịch đã chia theo user id |
 | Chưa có migration framework | Thay đổi schema phải viết SQL mới | Có thể thêm `node-pg-migrate`/Flyway |
 | Chứng chỉ self-signed | Trình duyệt cảnh báo | Đúng cho môi trường demo, production dùng ACME |
-| Không có Alertmanager | Alert chỉ hiển thị trong Prometheus UI | Bổ sung webhook email/Slack khi triển khai thật |
-| Chưa chạy được stack trong phiên cuối | Chưa chụp ảnh dashboard/log thực tế | Do Docker Desktop lỗi `HTTP 500` trên máy |
+| Chưa có Alertmanager | Alert chỉ hiển thị trong Prometheus UI | Bổ sung webhook email/Slack khi triển khai thật |
+| `pgadmin`, `promtail`, hai exporter không có healthcheck | `docker compose ps` không báo `healthy` cho các service này | Chỉ ảnh hưởng hiển thị trạng thái; app/nginx/db/monitoring chính đều có healthcheck |
 | Frontend vanilla JS | Khó mở rộng khi nhiều màn hình | Đổi lại không cần build, CSP đơn giản |
 
 ### 11.3. Hướng phát triển
@@ -1013,7 +1031,7 @@ Quy trình xác nhận lại được ghi trong [`DEMO_CHECKLIST.md`](DEMO_CHECK
 - Thêm trang "Đổi mật khẩu", "Quên mật khẩu" (token một lần, hết hạn 15 phút).
 - Gửi email xác nhận/nhắc lịch (Nodemailer + template), có hàng đợi để không chặn request.
 - Bổ sung lịch làm việc theo dịch vụ/nhân viên và chặn ngày nghỉ.
-- Viết thêm integration test cho admin confirm/cancel và rate limit.
+- Viết thêm integration test cho admin cancel và kiểm tra rate limit (429).
 
 **Trung hạn**
 
@@ -1044,9 +1062,10 @@ hạ tầng triển khai và bộ công cụ quan sát. Ba kết quả quan tr�
 3. **Vận hành có thể quan sát**: metrics, dashboard, alert và log tập trung được provision bằng file,
    kèm bộ truy vấn mẫu để điều tra sự cố theo `request_id`.
 
-Hạn chế còn lại chủ yếu thuộc phạm vi mở rộng (thanh toán, thông báo, thu hồi token, migration) và một
-phần do môi trường Docker trên máy demo gặp sự cố trong phiên cuối. Các bước kiểm chứng lại đã được ghi
-thành checklist để có thể thực hiện ngay khi môi trường ổn định.
+Hạn chế còn lại chủ yếu thuộc phạm vi mở rộng (thanh toán, thông báo, thu hồi token, migration, Alertmanager).
+Toàn bộ hạ tầng đã được chạy và kiểm chứng thực tế: 11/11 container `Up`, 6/6 target Prometheus `UP`,
+4 dashboard có dữ liệu, log app + Nginx vào Loki, 21 unit test và 10 integration test đều pass.
+Các bước kiểm chứng được ghi trong [`DEMO_CHECKLIST.md`](DEMO_CHECKLIST.md) để tái lập khi demo.
 
 ## 13. Phụ lục
 
@@ -1070,7 +1089,7 @@ Grafana: `admin` / `GRAFANA_ADMIN_PASSWORD` trong `.env`.
 | pgAdmin | http://localhost:5050 |
 | Prometheus | http://localhost:9090 |
 | Grafana | http://localhost:3001 |
-| PostgreSQL | `localhost:5432` (chỉ loopback) |
+| PostgreSQL | Không publish — `docker compose exec postgres psql -U app_user -d appointment` |
 
 ### 13.3. Lệnh thường dùng
 
@@ -1079,6 +1098,7 @@ node scripts/generate-secrets.js          # sinh .env
 docker compose config -q                  # kiểm tra cấu hình
 docker compose up -d --build              # build + chạy
 docker compose ps                         # trạng thái/health
+docker compose exec nginx nginx -t        # kiểm tra cú pháp cấu hình Nginx
 docker compose logs -f app                # log ứng dụng
 docker compose logs -f nginx              # log proxy
 docker compose exec postgres psql -U app_user -d appointment

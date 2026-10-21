@@ -42,8 +42,9 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d:ro
-    ports:
-      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    # Không publish cổng 5432 ra host: network backend là internal nên Docker
+    # không thể forward port ra ngoài. Truy cập DB qua pgAdmin (loopback) hoặc
+    # `docker compose exec postgres psql -U <user> -d <db>`.
     networks:
       - backend
     healthcheck:
@@ -155,6 +156,9 @@ services:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@appointment.local}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?PGADMIN_DEFAULT_PASSWORD is required}
       PGADMIN_LISTEN_PORT: "80"
+      # pgAdmin 8.x dùng email_validator và từ chối domain đặc biệt (.local).
+      # Cho phép domain "local" để tài khoản admin@appointment.local trong .env hợp lệ.
+      PGADMIN_CONFIG_ALLOW_SPECIAL_EMAIL_DOMAINS: '["local"]'
       PGADMIN_CONFIG_UPDATE_CHECK: "False"
       PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION: "True"
     volumes:
@@ -162,7 +166,13 @@ services:
     ports:
       - "127.0.0.1:${PGADMIN_PORT:-5050}:80"
     networks:
-      - backend
+      # Docker publish cổng theo IP của network được kết nối TRƯỚC. backend là
+      # internal nên không forward được port ra host, vì vậy monitoring (không
+      # internal) phải đứng trước; backend vẫn cần để pgAdmin truy cập PostgreSQL.
+      monitoring:
+        priority: 100
+      backend:
+        priority: 10
     depends_on:
       postgres:
         condition: service_healthy
@@ -334,6 +344,12 @@ services:
         condition: service_healthy
       loki:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     <<: *hardened
     logging: *default-logging
 

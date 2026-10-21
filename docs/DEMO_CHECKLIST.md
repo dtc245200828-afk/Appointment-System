@@ -48,7 +48,8 @@ Kỳ vọng:
 - 11 service: `postgres`, `app`, `nginx`, `pgadmin`, `prometheus`, `cadvisor`,
   `postgres-exporter`, `nginx-exporter`, `loki`, `promtail`, `grafana`.
 - 3 network: `appointment_frontend`, `appointment_backend` (internal), `appointment_monitoring`.
-- Chỉ `nginx` publish 80/443; `pgadmin`/`prometheus`/`grafana` bind `127.0.0.1`.
+- Chỉ `nginx` publish 80/443; `pgadmin`/`prometheus`/`grafana` bind `127.0.0.1`;
+  PostgreSQL **không publish cổng** (chỉ trong network `backend` internal).
 
 Nói: "Ứng dụng không publish cổng 3000, database không ra Internet; Nginx là điểm vào duy nhất."
 
@@ -82,6 +83,16 @@ Kỳ vọng: không thể truy cập chức năng admin bằng tài khoản khá
 ```bash
 curl -I http://localhost/                       # 301 -> https
 curl -k -I https://localhost/                   # HSTS, CSP, X-Frame-Options, ...
+curl -k -o NUL -w "%{http_code}\n" https://localhost/metrics      # 404
+curl -k -o NUL -w "%{http_code}\n" https://localhost/.env         # 404
+curl -k -o NUL -w "%{http_code}\n" https://localhost/api/admin/stats  # 401
+docker compose exec app id                      # uid=1000(node)
+docker compose exec nginx id                    # uid=101(nginx)
+docker compose exec postgres psql -U app_user -d appointment -c "CREATE TABLE hack(id int);"
+```
+
+Kỳ vọng: `permission denied for schema public`; log container không chứa `Authorization`/mật khẩu
+(tìm `REDACTED`).
 
 ## 5. Giám sát Prometheus (2 phút)
 
@@ -129,11 +140,13 @@ Xem thêm bộ truy vấn đầy đủ tại [`LOGQL_QUERIES.md`](LOGQL_QUERIES.
 
 ```bash
 npm test                     # 21 unit test
-npm run test:integration     # 8 integration test khi stack đang chạy
+npm run test:integration     # 10 integration test khi stack đang chạy
 ```
 
-Kết quả mong đợi: unit `pass 21 / fail 0`; integration `pass 8 / fail 0` (nếu stack chưa chạy: `skipped 8`
-kèm lý do, không tính là lỗi).
+Kết quả mong đợi: unit `pass 21 / fail 0`; integration `pass 10 / fail 0 / skipped 0`
+(nếu stack chưa chạy: `skipped 10` kèm lý do, không tính là lỗi). Bộ test giãn nhịp ~4 request/giây
+để không chạm rate limit 5 r/s của Nginx; `/api/auth/` giới hạn 20 request/15 phút/IP nên nếu chạy
+lại nhiều lần liền, reset bộ đếm bằng `docker compose restart app`.
 
 ## 9. Dọn dẹp sau demo
 
@@ -170,12 +183,3 @@ docker compose down -v              # xoá toàn bộ dữ liệu (dùng khi mu�
 | Loki/Promtail log tập trung | Mục 7 |
 | Kiểm thử tự động | Mục 8 |
 
-curl -k -o NUL -w "%{http_code}\n" https://localhost/metrics      # 404
-curl -k -o NUL -w "%{http_code}\n" https://localhost/api/admin/stats  # 401
-docker compose exec app id                      # uid=1000(node)
-docker compose exec nginx id                    # uid=101(nginx)
-docker compose exec postgres psql -U app_user -d appointment -c "CREATE TABLE hack(id int);"
-```
-
-Kỳ vọng: `permission denied for schema public`; log container không chứa `Authorization`/mật khẩu
-(tìm `REDACTED`).

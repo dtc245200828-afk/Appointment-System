@@ -92,8 +92,8 @@ Mọi kết luận đều gắn với file/tham số cụ thể trong repository
 | Filesystem chỉ đọc | `read_only: true` + `tmpfs: /tmp` (Nginx thêm `/var/cache/nginx`) | `docker-compose.yml` |
 | Giảm đặc quyền | `cap_drop: ALL`, `no-new-privileges:true` cho app/nginx/prometheus/grafana/exporter | `docker-compose.yml` |
 | Tách network | `frontend` (nginx↔app), `backend` internal (app↔db), `monitoring` | `docker-compose.yml` |
-| Không publish DB | `postgres` map `127.0.0.1:5432`, không ra Internet | `docker-compose.yml` |
-| UI quản trị nội bộ | pgAdmin/Prometheus/Grafana bind `127.0.0.1` | `docker-compose.yml` |
+| Không publish DB | `postgres` **không map cổng ra host**, chỉ tồn tại trong network `backend` (internal) | `docker-compose.yml` |
+| UI quản trị nội bộ | pgAdmin/Prometheus/Grafana bind `127.0.0.1`; pgAdmin gắn thêm network `monitoring` (Docker không forward port của container chỉ ở network internal) | `docker-compose.yml` |
 | Giới hạn log | `json-file` max 10 MB × 3 file/container | `docker-compose.yml` |
 | Healthcheck | App, Nginx, PostgreSQL, Prometheus, Grafana, Loki đều có healthcheck | `docker-compose.yml` |
 | Graceful shutdown | `server.close()` + đóng pool khi SIGTERM/SIGINT, tini làm PID 1 | `src/server.js`, `Dockerfile` |
@@ -146,6 +146,9 @@ docker compose exec nginx id          # uid=101(nginx)
 
 # 8. Unit test
 npm test
+
+# 9. pgAdmin (bind loopback)
+curl -o NUL -w "%{http_code}\n" http://127.0.0.1:5050/login    # 200
 ```
 
 Kết quả đã chạy trong môi trường hiện tại:
@@ -153,10 +156,14 @@ Kết quả đã chạy trong môi trường hiện tại:
 | Kiểm tra | Kết quả |
 |---|---|
 | `docker compose config -q` | Pass (exit 0) — cú pháp và biến bắt buộc hợp lệ |
+| `docker compose ps -a` | 11/11 container `Up`; app/nginx/postgres/prometheus/loki/cadvisor healthy |
 | `npm test` | 21/21 pass |
-| `npm run test:integration` | 8 test skip (chưa khởi động được Docker daemon) |
-| `git status` trước khi tạo `.gitignore` | `.env` chưa được track; đã bổ sung `.gitignore` để chặn vĩnh viễn |
-| Docker daemon | **Không khả dụng**: Docker Desktop trả `HTTP 500` cho mọi lệnh API |
+| `npm run test:integration` | 10/10 pass qua `https://localhost` (Nginx TLS), 0 skip |
+| Prometheus `/api/v1/targets` | 6/6 target `UP`; 2 nhóm alert rule `health = ok` |
+| Header/route | `X-Frame-Options: DENY` (một bộ header duy nhất), HTTP→301, `/metrics` & `/.env` 404, `/api/admin/stats` 401 |
+| Non-root & hardening | app `uid=1000(node)`, nginx `uid=101(nginx)`, `read_only=true`, `cap_drop=[ALL]`, `no-new-privileges` |
+| pgAdmin | `http://127.0.0.1:5050/login` → 200; kết nối `postgres:5432` trong network `backend` OK |
+| Docker daemon | Hoạt động (Docker Desktop 4.31.0) sau khi restart engine/WSL |
 
 ## 5. Checklist trước khi demo / nộp bài
 

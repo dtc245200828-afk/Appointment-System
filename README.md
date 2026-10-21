@@ -32,7 +32,7 @@ với reverse proxy Nginx, giám sát Prometheus + Grafana và tập trung log v
                                  ▼
                     ┌───────────────────────────┐
                     │  postgres:16 (volume)     │  app_user (DML),
-                    │  :5432 (bind 127.0.0.1)   │  exporter_user (pg_monitor)
+                    │  :5432 (không publish)    │  exporter_user (pg_monitor)
                     └───────────────────────────┘
 
   network: monitoring
@@ -168,7 +168,7 @@ docker compose down -v             # XOÁ TOÀN BỘ dữ liệu (volume) - dùn
 | `POSTGRES_PASSWORD` | (bắt buộc) | Mật khẩu superuser |
 | `APP_DB_PASSWORD` | (bắt buộc, ≥16 ký tự) | Mật khẩu role `app_user` |
 | `EXPORTER_DB_PASSWORD` | (bắt buộc, ≥16 ký tự) | Mật khẩu role `exporter_user` |
-| `POSTGRES_PORT` | `5432` | Cổng bind `127.0.0.1` để dùng client ngoài |
+| `POSTGRES_PORT` | `5432` | **Không còn dùng**: PostgreSQL không publish cổng ra host (network `backend` là `internal`) |
 | `HTTP_PORT` / `HTTPS_PORT` | `80` / `443` | Cổng public của Nginx |
 | `NGINX_SERVER_NAME` | `localhost` | CN của chứng chỉ tự sinh |
 | `PGADMIN_DEFAULT_EMAIL` / `PGADMIN_DEFAULT_PASSWORD` | `admin@appointment.local` / (bắt buộc) | Tài khoản pgAdmin |
@@ -190,7 +190,7 @@ docker compose down -v             # XOÁ TOÀN BỘ dữ liệu (volume) - dùn
 | Prometheus | http://localhost:9090 | Targets: `/targets`, Alerts: `/alerts` |
 | Grafana | http://localhost:3001 | Dashboard tự provision |
 | Loki | http://localhost:3100 | Chỉ trong network monitoring |
-| PostgreSQL | `localhost:5432` | Bind 127.0.0.1, dùng pgAdmin/psql |
+| PostgreSQL | Không publish | Chỉ truy cập trong network `backend`; dùng `docker compose exec postgres psql ...` hoặc pgAdmin (host `postgres`, port `5432`) |
 
 ## 7. Tài khoản demo (seed)
 
@@ -285,6 +285,10 @@ npm run test:all         # chạy cả hai bộ
   thay vì fail, nhờ đó pipeline không đỏ khi môi trường chưa bật Docker.
 - Có thể đổi URL kiểm thử bằng biến `BASE_URL` (mặc định `https://localhost`);
   đặt `ALLOW_INSECURE_TLS=false` nếu dùng chứng chỉ thật và muốn kiểm tra TLS.
+- Integration test giãn nhịp ~4 request/giây (Nginx giới hạn 5 r/s) và dùng tài khoản admin
+  seed để kiểm tra luồng xác nhận lịch hẹn; đổi bằng `ADMIN_EMAIL`/`ADMIN_PASSWORD` nếu cần.
+  `/api/auth/` giới hạn 20 request/15 phút/IP nên khi chạy lại nhiều lần liền hãy
+  `docker compose restart app` để reset bộ đếm trong bộ nhớ.
 
 ## 10. Giám sát & log
 
@@ -350,7 +354,8 @@ docker compose exec app ls -l /app/logs     # file log chia sẻ cho Promtail
 
 ```bash
 docker compose exec postgres psql -U postgres_admin -d appointment
-# hoặc dùng pgAdmin: http://localhost:5050 (host: postgres, port: 5432)
+# PostgreSQL KHÔNG publish cổng 5432 ra host (network backend internal):
+#   dùng lệnh exec ở trên, hoặc pgAdmin: http://localhost:5050 (host: postgres, port: 5432)
 # tài khoản chỉ đọc: exporter_user
 ```
 
@@ -386,14 +391,14 @@ docker compose down -v && docker compose up -d --build
 | Promtail không gửi log | Sai quyền file/volume | Kiểm tra `docker compose logs promtail`, đảm bảo app ghi được `/app/logs` |
 | `docker compose up` báo cổng bận | 80/443 đã dùng (IIS, Skype, Apache) | Đổi `HTTP_PORT`/`HTTPS_PORT` trong `.env` |
 | Docker Desktop trả `HTTP 500` cho mọi lệnh | Engine/WSL backend lỗi | Restart Docker Desktop, `wsl --shutdown`, kiểm tra `docker info` |
+| pgAdmin restart liên tục, log `does not appear to be a valid email address` | pgAdmin 8.x coi `.local` là domain đặc biệt | Compose đã đặt `PGADMIN_CONFIG_ALLOW_SPECIAL_EMAIL_DOMAINS: '["local"]'` |
+| Không mở được `http://localhost:5050` | Container chỉ ở network `internal` thì Docker không forward port ra host | pgAdmin được gắn thêm network `monitoring` (priority 100) trong `docker-compose.yml` |
 
 ## 14. Hạn chế đã biết
 
-1. **Chưa xác minh được toàn bộ stack bằng Docker trong môi trường hiện tại**: Docker CLI và
-   `docker compose config` hoạt động (cấu hình hợp lệ) nhưng Docker Desktop trả lỗi
-   `HTTP 500` cho mọi lệnh API (`docker version`, `docker ps`), nên chưa thể build/chạy 11 container.
-   Phần kiểm thử đã chạy: 21 unit test pass; 8 integration test skip do chưa có server.
-   Khi Docker hoạt động, chạy lại theo [`docs/DEMO_CHECKLIST.md`](docs/DEMO_CHECKLIST.md).
+1. **Stack đã được chạy và kiểm chứng đầy đủ trên Docker Desktop**: 11/11 container `Up`,
+   6/6 Prometheus target `UP`, 21 unit test + 10 integration test **pass** (qua HTTPS/Nginx),
+   pgAdmin truy cập được ở `http://localhost:5050`. Hạn chế còn lại nằm ở các mục 2–6 bên dưới.
 2. Chứng chỉ TLS là self-signed, chỉ phù hợp demo.
 3. JWT lưu trong `sessionStorage` phía client (đơn giản, tránh CSRF bằng cookie nhưng vẫn nhạy cảm với XSS —
    đã giảm thiểu bằng CSP chặt và không render HTML từ dữ liệu người dùng).

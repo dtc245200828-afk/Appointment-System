@@ -79,6 +79,8 @@ function createApp() {
       crossOriginEmbedderPolicy: false,
       crossOriginResourcePolicy: { policy: 'same-origin' },
       referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+      // Trùng giá trị với Nginx (X-Frame-Options: DENY) để hai lớp không xung đột
+      xFrameOptions: { action: 'deny' },
       hsts: false, // HSTS chỉ bật ở Nginx trên cổng HTTPS
     })
   );
